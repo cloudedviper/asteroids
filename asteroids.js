@@ -15,6 +15,8 @@ const ship = {
         y: 0
     },
     canShoot: true,
+    shootCooldown: 0,
+    lives: 3,
     blinkNum: 0
 };
 
@@ -24,25 +26,41 @@ const TURN_SPEED = 360; // Turn speed in degrees per second
 
 const bullets = [];
 const BULLET_SPEED = 5; // Speed of bullets in pixels per frame
+const BULLET_LIFETIME = 60; // Lifetime of bullets in frames
 
 const asteroids = [];
-const ASTEROID_NUM = 5; // Number of asteroids
+const ASTEROID_NUM = 5; // Number of initial asteroids
 const ASTEROID_SIZE = 50; // Size of asteroids in pixels
 const ASTEROID_SPEED = 1; // Maximum speed of asteroids in pixels per frame
+const ASTEROID_VERT = 10; // Average number of vertices on each asteroid
+const ASTEROID_JAG = 0.4; // Jaggedness of the asteroids (0 = none, 1 = lots)
+
+let score = 0;
+let gameOver = false;
 
 function createAsteroidBelt() {
     for (let i = 0; i < ASTEROID_NUM; i++) {
-        let x, y;
-        do {
-            x = Math.floor(Math.random() * canvas.width);
-            y = Math.floor(Math.random() * canvas.height);
-        } while (distBetweenPoints(ship.x, ship.y, x, y) < ASTEROID_SIZE * 2 + ship.radius);
-        
-        const xv = (Math.random() - 0.5) * ASTEROID_SPEED;
-        const yv = (Math.random() - 0.5) * ASTEROID_SPEED;
-
-        asteroids.push({ x, y, xv, yv });
+        createAsteroid();
     }
+}
+
+function createAsteroid() {
+    let x, y;
+    do {
+        x = Math.floor(Math.random() * canvas.width);
+        y = Math.floor(Math.random() * canvas.height);
+    } while (distBetweenPoints(ship.x, ship.y, x, y) < ASTEROID_SIZE * 2 + ship.radius);
+
+    const xv = (Math.random() - 0.5) * ASTEROID_SPEED;
+    const yv = (Math.random() - 0.5) * ASTEROID_SPEED;
+
+    const vert = Math.floor(Math.random() * (ASTEROID_VERT + 1) + ASTEROID_VERT / 2);
+    const offs = [];
+    for (let i = 0; i < vert; i++) {
+        offs.push(Math.random() * ASTEROID_JAG * 2 + 1 - ASTEROID_JAG);
+    }
+
+    asteroids.push({ x, y, xv, yv, vert, offs });
 }
 
 function distBetweenPoints(x1, y1, x2, y2) {
@@ -50,6 +68,8 @@ function distBetweenPoints(x1, y1, x2, y2) {
 }
 
 function update() {
+    if (gameOver) return;
+
     const blinkOn = ship.blinkNum % 2 === 0;
 
     // Rotate ship
@@ -83,9 +103,10 @@ function update() {
     for (let i = 0; i < bullets.length; i++) {
         bullets[i].x += bullets[i].xv;
         bullets[i].y += bullets[i].yv;
+        bullets[i].life++;
 
-        // Remove bullets that go off-screen
-        if (bullets[i].x < 0 || bullets[i].x > canvas.width || bullets[i].y < 0 || bullets[i].y > canvas.height) {
+        // Remove bullets that go off-screen or have exceeded their lifetime
+        if (bullets[i].x < 0 || bullets[i].x > canvas.width || bullets[i].y < 0 || bullets[i].y > canvas.height || bullets[i].life > BULLET_LIFETIME) {
             bullets.splice(i, 1);
             i--;
         }
@@ -106,6 +127,30 @@ function update() {
             asteroids[i].y = canvas.height;
         } else if (asteroids[i].y > canvas.height) {
             asteroids[i].y = 0;
+        }
+    }
+
+    // Collision detection
+    for (let i = 0; i < asteroids.length; i++) {
+        if (distBetweenPoints(ship.x, ship.y, asteroids[i].x, asteroids[i].y) < ship.radius + ASTEROID_SIZE) {
+            ship.lives--;
+            asteroids.splice(i, 1);
+            if (ship.lives <= 0) {
+                gameOver = true;
+            }
+            break;
+        }
+    }
+
+    // Bullet-asteroid collision detection
+    for (let i = 0; i < asteroids.length; i++) {
+        for (let j = 0; j < bullets.length; j++) {
+            if (distBetweenPoints(bullets[j].x, bullets[j].y, asteroids[i].x, asteroids[i].y) < ASTEROID_SIZE) {
+                asteroids.splice(i, 1);
+                bullets.splice(j, 1);
+                score += 10;
+                break;
+            }
         }
     }
 
@@ -146,11 +191,35 @@ function update() {
     ctx.strokeStyle = 'blue';
     for (let i = 0; i < asteroids.length; i++) {
         ctx.beginPath();
-        ctx.arc(asteroids[i].x, asteroids[i].y, ASTEROID_SIZE, 0, Math.PI * 2, false);
+        ctx.moveTo(
+            asteroids[i].x + asteroids[i].offs[0] * ASTEROID_SIZE * Math.cos(0),
+            asteroids[i].y + asteroids[i].offs[0] * ASTEROID_SIZE * Math.sin(0)
+        );
+        for (let j = 1; j < asteroids[i].vert; j++) {
+            ctx.lineTo(
+                asteroids[i].x + asteroids[i].offs[j] * ASTEROID_SIZE * Math.cos(j * Math.PI * 2 / asteroids[i].vert),
+                asteroids[i].y + asteroids[i].offs[j] * ASTEROID_SIZE * Math.sin(j * Math.PI * 2 / asteroids[i].vert)
+            );
+        }
+        ctx.closePath();
         ctx.stroke();
     }
 
-    requestAnimationFrame(update);
+    // Draw score
+    ctx.fillStyle = 'white';
+    ctx.font = '24px Arial';
+    ctx.fillText(`Score: ${score}`, 20, 30);
+
+    // Draw lives
+    ctx.fillText(`Lives: ${ship.lives}`, canvas.width - 100, 30);
+
+    if (!gameOver) {
+        requestAnimationFrame(update);
+    } else {
+        ctx.fillStyle = 'red';
+        ctx.font = '48px Arial';
+        ctx.fillText('GAME OVER', canvas.width / 2 - 150, canvas.height / 2);
+    }
 }
 
 document.addEventListener('keydown', keyDown);
@@ -159,14 +228,16 @@ document.addEventListener('keyup', keyUp);
 function keyDown(ev) {
     switch (ev.keyCode) {
         case 32: // Space bar (shoot)
-            if (ship.canShoot) {
+            if (ship.canShoot && ship.shootCooldown === 0) {
                 bullets.push({
                     x: ship.x + 4 / 3 * ship.radius * Math.cos(ship.angle),
                     y: ship.y - 4 / 3 * ship.radius * Math.sin(ship.angle),
                     xv: BULLET_SPEED * Math.cos(ship.angle),
-                    yv: -BULLET_SPEED * Math.sin(ship.angle)
+                    yv: -BULLET_SPEED * Math.sin(ship.angle),
+                    life: 0
                 });
                 ship.canShoot = false;
+                ship.shootCooldown = 15; // Cooldown period for shooting
             }
             break;
         case 37: // Left arrow (rotate left)
@@ -185,6 +256,7 @@ function keyUp(ev) {
     switch (ev.keyCode) {
         case 32: // Space bar (allow shooting again)
             ship.canShoot = true;
+            ship.shootCooldown = 0;
             break;
         case 37: // Left arrow (stop rotation)
         case 39: // Right arrow (stop rotation)
@@ -196,6 +268,8 @@ function keyUp(ev) {
     }
 }
 
+// Continuously create new asteroids
+setInterval(createAsteroid, 3000); // Every 3 seconds
+
 createAsteroidBelt();
 update();
-
